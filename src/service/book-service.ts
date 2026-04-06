@@ -1,6 +1,8 @@
-import { Connection, Pool } from "pg";
+import { Pool } from "pg";
 import dotenv from "dotenv";
-import { BookDto, BookSchema } from "../model/books_schema.js";
+import { BookDto, BookDtoSchema } from "../model/books_schema.js";
+import { BookEntity, BookEntitySchema } from "../entity/book_entity.js";
+import z from "zod/v4";
 
 dotenv.config();
 
@@ -38,13 +40,16 @@ class BookService {
    * The method queries the database to retrieve all records.
    * @returns array with book objects
    */
-  public async getAllBooks(): Promise<BookDto[]> {
-    try {
-      const result = await this.pool.query("SELECT * FROM books");
-      return this.parseBooks(result.rows);
-    } catch (err) {
-      throw new Error("Database connection failed");
-    }
+  public async getAllBooks(
+    offset: number,
+    limit: number,
+  ): Promise<BookEntity[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM books OFFSET $1 LIMIT $2",
+      [offset, limit],
+    );
+
+    return z.array(BookEntitySchema).parse(result.rows);
   }
 
   /**
@@ -52,23 +57,18 @@ class BookService {
    * @param id book id
    * @returns a single-element array containing a book object
    */
-  public async getBook(id: number): Promise<BookDto[]> {
-    try {
-      const result = await this.pool.query(
-        "SELECT * FROM books WHERE id = $1",
-        [id],
-      );
-      const books = this.parseBooks(result.rows);
+  public async getBook(id: number): Promise<BookEntity> {
+    const result = await this.pool.query("SELECT * FROM books WHERE id = $1", [
+      id,
+    ]);
+    const book = BookEntitySchema.parse(result);
+    //todo separate table
+    await this.pool.query(
+      `UPDATE books SET "numbersOfView" = "numbersOfView" + 1 WHERE id = $1`,
+      [id],
+    );
 
-      await this.pool.query(
-        `UPDATE books SET "numbersOfView" = "numbersOfView" + 1 WHERE id = $1`,
-        [id],
-      );
-
-      return books;
-    } catch (err) {
-      throw new Error("Book id is invalid or DB connection failed");
-    }
+    return book;
   }
 
   /**
@@ -77,7 +77,7 @@ class BookService {
    * @returns new book id
    */
   public async addBook(newBook: BookDto): Promise<number> {
-    const validated = BookSchema.safeParse(newBook);
+    const validated = BookDtoSchema.safeParse(newBook);
 
     if (!validated.success) {
       console.error("Invalid book format:", validated.error.format());
@@ -132,20 +132,13 @@ class BookService {
    * @param id The ID of the book
    * @returns true if the book was updated
    */
-  public async incrementWantCount(id: number): Promise<boolean> {
-    try {
-      const result = await this.pool.query(
-        `UPDATE books SET "wantCount" = "wantCount" + 1 WHERE id = $1`,
-        [id],
-      );
-      if (typeof result.rowCount === "number") {
-        return result.rowCount > 0;
-      }
-      return false;
-    } catch (err) {
-      console.error("DB ERROR in incrementWantCount:", err);
-      throw new Error("Failed to increase counter add to wishlist");
-    }
+  public async incrementWantCount(id: number) {
+    const result = await this.pool.query(
+      `UPDATE books SET "wantCount" = "wantCount" + 1 WHERE id = $1 RETURNING "wantCount";`,
+      [id],
+    );
+    const newCount = result.rows[0].wantCount;
+    return result.rows[0].wantCount;
   }
 
   /**
@@ -154,7 +147,7 @@ class BookService {
    * @returns object of type BookDto
    */
   public normalizedBook(raw: Record<string, string>): BookDto {
-    return BookSchema.parse({
+    return BookDtoSchema.parse({
       title: raw["title"],
       year: this.isNumber(raw["year"]),
       author: raw["author"],
@@ -183,7 +176,7 @@ class BookService {
         isbn: Number(row.isbn),
       };
 
-      const parsed = BookSchema.safeParse(transformed);
+      const parsed = BookDtoSchema.safeParse(transformed);
       if (parsed.success) {
         validBooks.push(parsed.data);
       } else {
