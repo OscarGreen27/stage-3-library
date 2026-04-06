@@ -1,13 +1,13 @@
 import express, { Request, Response } from "express";
 import path from "path";
 import upload from "../middelware/upload.js";
-import queryValidator from "../class/query_validator.js";
+import QueryValidator from "../helper/query_validator.js";
 import bookService from "../service/book-service.js";
 
 const ADMIN_PAGE = path.resolve(process.cwd(), "HTML", "admin_page.html");
 
 const adminRouter = express.Router();
-const queryVal = new queryValidator();
+const queryVal = new QueryValidator();
 
 //router implementation for the administrator.
 // Responsible for displaying books on the administrator page, adding and deleting books
