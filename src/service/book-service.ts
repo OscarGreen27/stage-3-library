@@ -103,7 +103,7 @@ class BookService {
     const values = Object.values(newBook);
     const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
 
-    return await this.insertNewValIntoDB(keys, values, placeholders, authors);
+    return await this.insertNewValIntoDb(keys, values, placeholders, authors);
   }
 
   /**
@@ -139,7 +139,7 @@ class BookService {
     return result.rows[0].wantCount;
   }
 
-  private async insertNewValIntoDB(
+  private async insertNewValIntoDb(
     keys: string[],
     values: (string | number)[],
     placeholders: string,

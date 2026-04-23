@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import path from "path";
 import fsPromises from "fs/promises";
-import { Render } from "../view/render.js";
+//import { Render } from "../view/render.js";
 import QueryValidator from "../helper/query_validator.js";
 import bookService from "../service/book-service.js";
 import { Controller } from "../controllers/controller.js";
@@ -12,7 +12,7 @@ const router = express.Router();
 const MAIN_PAGE = path.resolve(process.cwd(), "HTML", "books-page.html");
 const BOOK_PAGE = path.resolve(process.cwd(), "HTML", "book-page.html");
 
-const render = new Render();
+//const render = new Render();
 const queryVal = new QueryValidator();
 const controller = new Controller();
 
