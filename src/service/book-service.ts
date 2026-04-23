@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import dotenv from "dotenv";
-import { BookDto, BookDtoSchema } from "../model/books_schema.js";
+import { BookDto, BookDtoSchema } from "../dto/books_dto.js";
 import { BookEntity, BookEntitySchema } from "../entity/book_entity.js";
 import z from "zod/v4";
 
@@ -40,15 +40,16 @@ class BookService {
    * The method queries the database to retrieve all records.
    * @returns array with book objects
    */
-  public async getAllBooks(
-    offset: number,
-    limit: number,
-  ): Promise<BookEntity[]> {
+  public async getBooks(offset: number, limit: number): Promise<BookEntity[]> {
     const result = await this.pool.query(
-      "SELECT * FROM books OFFSET $1 LIMIT $2",
-      [offset, limit],
+      `SELECT books.*, json_agg(authors.name) AS authors FROM books 
+      LEFT JOIN book_author ON books.id = book_author.book_id 
+      LEFT JOIN authors ON book_author.author_id = authors.id 
+      GROUP BY books.id 
+      ORDER BY books.id 
+      LIMIT $1 OFFSET $2;`,
+      [limit, offset],
     );
-
     return z.array(BookEntitySchema).parse(result.rows);
   }
 
@@ -58,54 +59,51 @@ class BookService {
    * @returns a single-element array containing a book object
    */
   public async getBook(id: number): Promise<BookEntity> {
-    const result = await this.pool.query("SELECT * FROM books WHERE id = $1", [
-      id,
-    ]);
+    const result = await this.pool.query(
+      `SELECT books.*, json_agg(authors.name) AS authors FROM books 
+      LEFT JOIN book_author ON books.id = book_author.book_id 
+      LEFT JOIN authors ON book_author.author_id = authors.id 
+      GROUP BY books.id 
+      ORDER BY books.id 
+      WHERE books.id = $1`,
+      [id],
+    );
     const book = BookEntitySchema.parse(result);
-    //todo separate table
+
     await this.pool.query(
-      `UPDATE books SET "numbersOfView" = "numbersOfView" + 1 WHERE id = $1`,
+      `UPDATE clicks SET "clicks_count" = "clicks_count" + 1 WHERE id = $1`,
       [id],
     );
 
     return book;
   }
 
+  public updateWantCount = async (book_id: number) => {
+    await this.pool.query(
+      `UPDATE want SET "want_count" = "want_count" + 1
+     WHERE book_id = $1`,
+      [book_id],
+    );
+  };
+
   /**
    * The method queries the database to add a new book.
    * @param newBook an object that contains data about a new book
    * @returns new book id
    */
-  public async addBook(newBook: BookDto): Promise<number> {
-    const validated = BookDtoSchema.safeParse(newBook);
+  public async addBook(data: BookDto): Promise<number> {
+    if (!data) throw new Error("Data is undefined!");
+    BookDtoSchema.safeParse(data);
 
-    if (!validated.success) {
-      console.error("Invalid book format:", validated.error.format());
-      throw new Error("Invalid book data");
-    }
+    const { authors, ...newBook } = data;
 
-    const book = validated.data;
-    const keys: (keyof BookDto)[] = [
-      "title",
-      "year",
-      "author",
-      "pages",
-      "isbn",
-      "description",
-      "cover",
-    ];
-    const values = keys.map((key) => book[key]);
+    if (!newBook) throw new Error("New book is undefined!");
 
+    const keys = Object.keys(newBook);
+    const values = Object.values(newBook);
     const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
 
-    const result = await this.pool.query(
-      `INSERT INTO books (${keys.join(
-        ", ",
-      )}) VALUES (${placeholders}) RETURNING id`,
-      values,
-    );
-
-    return result.rows[0].id;
+    return await this.insertNewValIntoDB(keys, values, placeholders, authors);
   }
 
   /**
@@ -141,56 +139,43 @@ class BookService {
     return result.rows[0].wantCount;
   }
 
-  /**
-   * The method changes the data type from string to number in the year, pages, isbn fields of the book object.
-   * @param raw object book received from client
-   * @returns object of type BookDto
-   */
-  public normalizedBook(raw: Record<string, string>): BookDto {
-    return BookDtoSchema.parse({
-      title: raw["title"],
-      year: this.isNumber(raw["year"]),
-      author: raw["author"],
-      pages: this.isNumber(raw["pages"]),
-      isbn: this.isNumber(raw["isbn"]),
-      description: raw["description"],
-    });
-  }
+  private async insertNewValIntoDB(
+    keys: string[],
+    values: (string | number)[],
+    placeholders: string,
+    authors: number[],
+  ) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
 
-  /**
-   *The method converts raw rows obtained from the database into valid objects of type BookDto.
-   * @param rows - an array of objects from the database
-   * @returns - an array of BookDto objects that have passed validation
-   */
-  private parseBooks(rows: any[]): BookDto[] {
-    const validBooks: BookDto[] = [];
+      //1. Insert new book
+      const bookRes = await client.query(
+        `INSERT INTO books (${keys.join(", ")}) VALUES (${placeholders}) RETURNING id)`,
+        values,
+      );
+      const bookId = bookRes.rows[0].id;
 
-    for (const row of rows) {
-      const transformed = {
-        ...row,
-        id: Number(row.id),
-        year: Number(row.year),
-        pages: Number(row.pages),
-        numbersOfView: Number(row.numbersOfView),
-        wantCount: Number(row.wantCount),
-        isbn: Number(row.isbn),
-      };
-
-      const parsed = BookDtoSchema.safeParse(transformed);
-      if (parsed.success) {
-        validBooks.push(parsed.data);
-      } else {
-        console.error("Validation failed:", parsed.error.format());
+      //2. Making new relations between authors and books
+      for (const authorId of authors) {
+        await client.query(
+          `INSERT INTO book_authors (book_id, authors_id) VALUES ($1, $2)`,
+          [bookId, authorId],
+        );
       }
-    }
-    return validBooks;
-  }
+      //3. Insert new book id into want and click tables
+      await client.query(`INSERT INTO want (book_id) VALUES ($1) `, [bookId]);
+      await client.query(`INSERT INTO click (book_id) VALUES ($1) `, [bookId]);
 
-  private isNumber(param: any): number {
-    if (!isNaN(Number(param))) {
-      return Number(param);
+      client.query("COMMIT");
+
+      return bookId;
+    } catch (err) {
+      client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
-    return 0;
   }
 }
 
