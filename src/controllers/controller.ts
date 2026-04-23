@@ -6,22 +6,23 @@ export class Controller {
   constructor() {
     this.queryValidator = new QueryValidator();
   }
-  public async getAllBooks(req: Request, res: Response) {
+  public getAllBooks = async (req: Request, res: Response) => {
     const filter = req.query.filter;
     const offset = this.queryValidator.offsetCheck(req.query.offset);
-    const limit = this.queryValidator.userLimitCheck(req.query.somthing);
+    const limit = this.queryValidator.userLimitCheck(req.query.limit);
     try {
-      const books = await bookService.getAllBooks(offset, limit);
+      const books = await bookService.getBooks(offset, limit);
+      console.log(books);
       res.status(200).json({
         status: "success",
         data: books,
       });
     } catch (err) {
-      //todo
+      console.log(err);
     }
-  }
+  };
 
-  public async getBook(req: Request, res: Response) {
+  public getBook = async (req: Request, res: Response) => {
     const id = Number(req.params.id);
     try {
       const book = await bookService.getBook(id);
@@ -32,7 +33,7 @@ export class Controller {
     } catch (err) {
       //todo
     }
-  }
+  };
 
   public async incrementWant(req: Request, res: Response) {
     const id = Number(req.query.id);
@@ -42,6 +43,16 @@ export class Controller {
         status: "success",
         data: { wantCount: result },
       });
+    } catch (err) {
+      //todo
+    }
+  }
+
+  public async addBook(req: Request, res: Response) {
+    const data = req.body.data;
+
+    try {
+      const result = await bookService.addBook(data);
     } catch (err) {
       //todo
     }
